@@ -24,8 +24,11 @@ requirements = cfg.get('requirements','').split()
 lic = licenses[cfg['license']]
 min_python = cfg['min_python']
 
+lib_name = cfg['lib_name']
+pkg_path = cfg['pkg_path']
+
 setuptools.setup(
-    name = cfg['lib_name'],
+    name = lib_name,
     license = lic[0],
     classifiers = [
         'Development Status :: ' + statuses[int(cfg['status'])],
@@ -34,7 +37,8 @@ setuptools.setup(
         'Natural Language :: ' + cfg['language'].title(),
     ] + ['Programming Language :: Python :: '+o for o in py_versions[py_versions.index(min_python):]],
     url = cfg['git_url'],
-    packages = setuptools.find_packages(),
+    packages = [lib_name],
+    package_dir = {'': pkg_path},
     include_package_data = True,
     install_requires = requirements,
     dependency_links = cfg.get('dep_links','').split(),

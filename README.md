@@ -1,4 +1,7 @@
-# nbdev template
+## Build and install using nbdev:
 
-Use this template to more easily create your nbdev project.
+Rebuild is required after each modification of library notebooks in `/src` folder:
 
+`rm -rf lib-pkg/hlai/* && nbdev_build_lib`
+
+Install once using `pip install -e .`. Install per each env if you are using conda's pip.

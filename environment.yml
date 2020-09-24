@@ -1,0 +1,24 @@
+name: lens
+channels:
+  - defaults
+  - conda-forge
+  - pytorch
+dependencies:
+  - pip
+  - pytorch
+  - torchvision
+  - tensorboard
+  - pyyaml
+  - pip:
+    - SimpleITK
+    - ipywidgets
+    - sacred
+  - ipykernel
+  - tqdm
+  - matplotlib
+  - scikit-learn
+  - pandas
+  - numpy
+  - opencv
+  - seaborn
+  

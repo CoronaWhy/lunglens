@@ -143,6 +143,7 @@ if __name__ == "__main__":
     args.epochs = 1
     args.batch_size = 32
 
+    os.makedirs(args.log_dir, exist_ok=True)
     os.makedirs(args.model_path, exist_ok=True)
 
     main(0, args)

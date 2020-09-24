@@ -1,0 +1,3 @@
+[submodule "simclr"]
+	path = simclr
+	url = https://github.com/CoronaWhy/SimCLR

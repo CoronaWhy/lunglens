@@ -13,6 +13,7 @@ dependencies:
     - SimpleITK
     - ipywidgets
     - sacred
+    - nbdev
   - ipykernel
   - tqdm
   - matplotlib

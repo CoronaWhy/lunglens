@@ -22,4 +22,6 @@ dependencies:
   - numpy
   - opencv
   - seaborn
+  - imgaug
+  - albumentations
   

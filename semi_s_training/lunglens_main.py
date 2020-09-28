@@ -2,6 +2,7 @@ import os
 import argparse
 from datetime import datetime
 from tqdm.auto import tqdm
+import matplotlib.pyplot as plt
 
 import numpy as np
 import torch
@@ -64,6 +65,50 @@ def train(args, data_loader, model, criterion, optimizer, writer):
     return loss_epoch
 
 
+def validate(data_loader, model, visualize=False):
+
+    for i, (superbatch0, superbatch1) in enumerate(data_loader):
+        x_i = squash_scan_batches(superbatch0).to(args.device)
+        x_j = squash_scan_batches(superbatch1).to(args.device)
+        h_i, h_j, z_i, z_j = model(x_i, x_j)
+        z_i, z_j = z_i.cpu().detach().numpy(), z_j.cpu().detach().numpy()
+        if i == 0:
+            z_i_vec, z_j_vec = np.copy(z_i), np.copy(z_j)
+        else:
+            z_i_vec = np.concatenate((z_i_vec, z_i))
+            z_j_vec = np.concatenate((z_j_vec, z_j))
+        #print(i, x_i.shape, x_j.shape, z_i.shape, z_j.shape, z_i_vec.shape, z_j_vec.shape)
+
+    num_pairs = z_i_vec.shape[0]
+    loss_calculator = NT_Xent(batch_size=num_pairs, \
+                              temperature=0.5, device='cpu', world_size=1)
+    loss_calculator.training = False
+    loss, sim = loss_calculator(torch.from_numpy(z_i_vec), torch.from_numpy(z_j_vec))
+    print('validation loss =', loss)
+    if visualize:
+        ur = sim[:num_pairs, num_pairs:]
+        bl = sim[num_pairs:, :num_pairs]
+        positives = np.concatenate((np.diag(ur), np.diag(bl))).flatten()
+        allpairs = np.concatenate((ur, bl)).flatten()
+        bins = np.linspace(start=-1, stop=1, num=500)
+        positives = np.histogram(positives, bins)[0]
+        assert positives.sum() == num_pairs * 2
+        negatives = np.histogram(allpairs, bins)[0] - positives
+        assert negatives.sum() == 2*num_pairs * (num_pairs - 1)
+        bins = (bins[:-1] + bins[1:]) / 2
+        fig, ax = plt.subplots(2, 2)
+        ax[0, 1].imshow(ur, cmap="gist_gray", interpolation='none')
+        ax[1, 0].imshow(bl, cmap='gist_gray', interpolation='none')
+        ax[0, 0].plot(bins, negatives / negatives.sum(), label='negs')
+        ax[0, 0].plot(bins, positives / positives.sum(), label='pos')
+        ax[0, 0].grid(True)
+        ax[0, 0].legend()
+        plt.show()
+
+    return loss
+
+
+
 def main(gpu, args):
     rank = args.nr * args.gpus + gpu
 
@@ -71,8 +116,10 @@ def main(gpu, args):
     np.random.seed(args.seed)
 
     tfms = A.Compose([
-        A.Resize(512, 512),
-        A.RandomCrop(384, 384),
+        # A.Resize(512, 512),
+        # A.RandomCrop(384, 384),
+        A.Resize(256, 256),
+        A.RandomCrop(192, 192),
         ToColorTensor()
     ])
 
@@ -117,9 +164,12 @@ def main(gpu, args):
 
     args.global_step = 0
     args.current_epoch = 0
+    validation_loss_trc = [validate(loader, model, visualize=True)]
     for epoch in range(args.start_epoch, args.epochs):
         lr = optimizer.param_groups[0]["lr"]
         loss_epoch = train(args, loader, model, criterion, optimizer, writer)
+
+        validation_loss_trc.append(validate(loader, model, epoch == args.epochs-1))
 
         if args.nr == 0 and scheduler:
             scheduler.step()
@@ -137,6 +187,12 @@ def main(gpu, args):
 
     ## end training
     save_model(args, model, optimizer)
+    #
+    plt.plot(validation_loss_trc)
+    plt.grid(True)
+    plt.title('validation loss trace')
+    plt.show()
+    #
 
 
 if __name__ == "__main__":
@@ -154,7 +210,7 @@ if __name__ == "__main__":
     args.workers = 0
     args.datasets_root = './data/prepared'
     args.log_dir = './logs'
-    args.epochs = 3
+    args.epochs = 30
 
     args.scans_per_batch = 4
     args.slices_per_scan = 4

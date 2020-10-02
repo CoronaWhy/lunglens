@@ -9,6 +9,8 @@ import numpy as np
 import torch
 import torchvision
 from torch.nn.parallel import DataParallel
+from torch.nn import Conv2d
+from torch.nn.init import kaiming_normal_
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 import albumentations as A
@@ -153,8 +155,7 @@ def main(gpu, args):
         if torch.cuda.get_device_name() == 'GeForce MX130':
             tfms = A.Compose([
                 A.Resize(256, 256),
-                A.RandomCrop(192, 192),
-                ToColorTensor()
+                A.RandomCrop(192, 192)
             ])
 
     dataset = RandomSlicerDataset(
@@ -166,6 +167,11 @@ def main(gpu, args):
 
     # initialize ResNet
     encoder = get_resnet(args.resnet, pretrained=False)
+    #
+    # override input layer to make it monochrome
+    encoder.conv1 = Conv2d(1, encoder.conv1.out_channels, kernel_size=7, stride=2, padding=3, bias=False)
+    kaiming_normal_(encoder.conv1.weight, mode='fan_out', nonlinearity='relu')
+    #
     n_features = encoder.fc.in_features  # get dimensions of fc layer
 
     # initialize model
@@ -204,7 +210,10 @@ def main(gpu, args):
     print('validation loss before train:', validation_loss_trc[0])
     for epoch in range(args.start_epoch, args.epochs):
         lr = optimizer.param_groups[0]["lr"]
+        t_start = datetime.now()
         loss_epoch = train(args, loader, model, criterion, optimizer, writer)
+        t_end = datetime.now()
+        train_time = (t_end - t_start)
 
         dataset.set_tst_mode()
         validation_loss_trc.append(validate(loader, model, epoch == args.epochs-1))
@@ -222,7 +231,7 @@ def main(gpu, args):
             print(
                 f"Epoch [{epoch}/{args.epochs}]\t Loss: {loss_epoch / len(loader)}\t lr: {round(lr, 5)}"
             )
-            print('validation loss:', validation_loss_trc[-1])
+            print('validation loss:', validation_loss_trc[-1], '\t\ttrain_time:', train_time)
             sleep(0.2)
             args.current_epoch += 1
 

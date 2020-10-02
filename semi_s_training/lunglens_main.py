@@ -3,6 +3,7 @@ import argparse
 from datetime import datetime
 from tqdm.auto import tqdm
 import matplotlib.pyplot as plt
+from time import sleep
 
 import numpy as np
 import torch
@@ -54,7 +55,7 @@ def train(args, data_loader, model, criterion, optimizer, writer):
         loss.backward()
         optimizer.step()
 
-        if args.nr == 0 and step % 20 == 0:
+        if args.nr == 0 and step > 0 and step % 20 == 0:
             print(f"Step [{step}/{len(data_loader)}]\t Loss: {loss.item()}")
 
         if args.nr == 0:
@@ -63,6 +64,35 @@ def train(args, data_loader, model, criterion, optimizer, writer):
 
         loss_epoch += loss.item()
     return loss_epoch
+
+
+class NT_Xent_caclulator(NT_Xent):
+
+    def forward(self, z_i, z_j, visualize=False):
+
+        N = 2 * self.batch_size * self.world_size
+
+        z = torch.cat((z_i, z_j), dim=0)
+        if self.world_size > 1:
+            z = torch.cat(GatherLayer.apply(z), dim=0)
+
+        sim = self.similarity_f(z.unsqueeze(1), z.unsqueeze(0)) / self.temperature
+
+        sim_i_j = torch.diag(sim, self.batch_size * self.world_size)
+        sim_j_i = torch.diag(sim, -self.batch_size * self.world_size)
+
+        # We have 2N samples, but with Distributed training every GPU gets N examples too, resulting in: 2xNxN
+        positive_samples = torch.cat((sim_i_j, sim_j_i), dim=0).reshape(
+            N, 1
+        )
+        negative_samples = sim[self.mask].reshape(N, -1)
+
+        labels = torch.zeros(N).to(positive_samples.device).long()
+        logits = torch.cat((positive_samples, negative_samples), dim=1)
+        loss = self.criterion(logits, labels)
+        loss /= N
+
+        return loss, sim * self.temperature
 
 
 def validate(data_loader, model, visualize=False):
@@ -80,11 +110,10 @@ def validate(data_loader, model, visualize=False):
         #print(i, x_i.shape, x_j.shape, z_i.shape, z_j.shape, z_i_vec.shape, z_j_vec.shape)
 
     num_pairs = z_i_vec.shape[0]
-    loss_calculator = NT_Xent(batch_size=num_pairs, \
-                              temperature=0.5, device='cpu', world_size=1)
-    loss_calculator.training = False
+    loss_calculator = NT_Xent_caclulator(batch_size=num_pairs, \
+                                         temperature=0.5, device='cpu', world_size=1)
     loss, sim = loss_calculator(torch.from_numpy(z_i_vec), torch.from_numpy(z_j_vec))
-    print('validation loss =', loss)
+    #print('validation loss =', loss)
     if visualize:
         ur = sim[:num_pairs, num_pairs:]
         bl = sim[num_pairs:, :num_pairs]
@@ -105,7 +134,7 @@ def validate(data_loader, model, visualize=False):
         ax[0, 0].legend()
         plt.show()
 
-    return loss
+    return loss.numpy()
 
 
 
@@ -116,12 +145,17 @@ def main(gpu, args):
     np.random.seed(args.seed)
 
     tfms = A.Compose([
-        # A.Resize(512, 512),
-        # A.RandomCrop(384, 384),
-        A.Resize(256, 256),
-        A.RandomCrop(192, 192),
+        A.Resize(512, 512),
+        A.RandomCrop(384, 384),
         ToColorTensor()
     ])
+    if torch.cuda.device_count() == 1:
+        if torch.cuda.get_device_name() == 'GeForce MX130':
+            tfms = A.Compose([
+                A.Resize(256, 256),
+                A.RandomCrop(192, 192),
+                ToColorTensor()
+            ])
 
     dataset = RandomSlicerDataset(
         args.datasets_root, tfms, 
@@ -164,12 +198,17 @@ def main(gpu, args):
 
     args.global_step = 0
     args.current_epoch = 0
+    dataset.set_tst_mode()
     validation_loss_trc = [validate(loader, model, visualize=True)]
+    dataset.set_trn_mode()
+    print('validation loss before train:', validation_loss_trc[0])
     for epoch in range(args.start_epoch, args.epochs):
         lr = optimizer.param_groups[0]["lr"]
         loss_epoch = train(args, loader, model, criterion, optimizer, writer)
 
+        dataset.set_tst_mode()
         validation_loss_trc.append(validate(loader, model, epoch == args.epochs-1))
+        dataset.set_trn_mode()
 
         if args.nr == 0 and scheduler:
             scheduler.step()
@@ -183,6 +222,8 @@ def main(gpu, args):
             print(
                 f"Epoch [{epoch}/{args.epochs}]\t Loss: {loss_epoch / len(loader)}\t lr: {round(lr, 5)}"
             )
+            print('validation loss:', validation_loss_trc[-1])
+            sleep(0.2)
             args.current_epoch += 1
 
     ## end training
@@ -214,7 +255,7 @@ if __name__ == "__main__":
 
     args.scans_per_batch = 4
     args.slices_per_scan = 4
-    args.inter_slice_distance = 5
+    args.inter_slice_distance = 50
     args.single_scan_loss = True
 
     print(f'Batch size: {args.scans_per_batch * args.slices_per_scan}')

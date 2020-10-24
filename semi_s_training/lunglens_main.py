@@ -51,20 +51,32 @@ def train(args, data_loader, model, criterion, optimizer, writer):
         optimizer.zero_grad()
 
         # enumerate batches in superbatches
-        for (z_i_batch, z_j_batch) in zip(z_i, z_j):
-            loss += criterion(z_i_batch, z_j_batch)
+        #print(z_i.shape, z_j.shape)
+        if args.single_scan_loss:
+            for (z_i_batch, z_j_batch) in zip(z_i, z_j):
+                loss += criterion(z_i_batch, z_j_batch)
+            do_step = True
+        else:
+            # not single scan loss
+            if z_i.shape[0] == criterion.batch_size:
+                loss += criterion(z_i, z_j)
+                do_step = True
+            else:
+                do_step = False
+                # probably end of epoch, not enough data
 
-        loss.backward()
-        optimizer.step()
+        if do_step:
+            loss.backward()
+            optimizer.step()
 
-        if args.nr == 0 and step > 0 and step % 20 == 0:
-            print(f"Step [{step}/{len(data_loader)}]\t Loss: {loss.item()}")
+            if args.nr == 0 and step > 0 and step % 20 == 0:
+                print(f"Step [{step}/{len(data_loader)}]\t Loss: {loss.item()}")
 
-        if args.nr == 0:
-            writer.add_scalar("Loss/train_epoch", loss.item(), args.global_step)
-            args.global_step += 1
+            if args.nr == 0:
+                writer.add_scalar("Loss/train_epoch", loss.item(), args.global_step)
+                args.global_step += 1
 
-        loss_epoch += loss.item()
+            loss_epoch += loss.item()
     return loss_epoch
 
 
@@ -158,10 +170,11 @@ def main(gpu, args):
                 A.RandomCrop(192, 192)
             ])
 
-    dataset = RandomSlicerDataset(
-        args.datasets_root, tfms, 
-        args.slices_per_scan, args.inter_slice_distance
-    )
+    # dataset = RandomSlicerDataset(
+    #     args.datasets_root, img_tfm(tfms),
+    #     args.slices_per_scan, args.inter_slice_distance
+    # )
+    dataset = PatchedDataset(args.datasets_root, target_size=(128, 128))
 
     loader = DataLoader(dataset, batch_size=args.scans_per_batch, shuffle=True)
 
@@ -259,13 +272,15 @@ if __name__ == "__main__":
     args.model_path = './saved_models'
     args.workers = 0
     args.datasets_root = './data/prepared'
+    args.datasets_root = './data/patches'
     args.log_dir = './logs'
     args.epochs = 30
 
     args.scans_per_batch = 4
+    args.scans_per_batch = 8
     args.slices_per_scan = 4
     args.inter_slice_distance = 50
-    args.single_scan_loss = True
+    args.single_scan_loss = False
 
     print(f'Batch size: {args.scans_per_batch * args.slices_per_scan}')
 
